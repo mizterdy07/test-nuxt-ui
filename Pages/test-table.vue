@@ -1,38 +1,58 @@
 <template>
-    <div>
-        <UButton @click="fnResponsive">Responsive</UButton><br>
-        <UTable ref="refDataTable" sticky v-model:column-visibility="columnVisibility" :data="data"
-            :columns="visibleColumns" class="flex-1 max-h-[312px]">
+    <div class="flex-1 w-full">
+        <UButton @click="reCulResponsive">Responsive</UButton><br>
+        <UTable ref="refDataTable" sticky v-model:column-visibility="columnVisibility"
+            v-model:row-selection="rowSelection" :data="data" :columns="visibleColumns" class="flex-1 max-h-[312px]">
             <template #name-cell="{ row }">
                 <ULink as="button">{{ row.original.name }}</ULink>
-
             </template>
         </UTable>
         {{ columnVisibility }}
+        <div class="px-4 py-3.5 border-t border-[var(--ui-border-accented)] text-sm text-[var(--ui-text-muted)]">
+            {{ refDataTable?.tableApi?.getFilteredSelectedRowModel().rows.length || 0 }} of
+            {{ refDataTable?.tableApi?.getFilteredRowModel().rows.length || 0 }} row(s) selected.
+        </div>
     </div>
 
 </template>
 
 <script setup>
+const UCheckbox = resolveComponent('UCheckbox')
 const refDataTable = ref()
-const columnVisibility = ref({
-    // id: false
-})
+const columnVisibility = ref({})
+const rowSelection = defineModel('select')
 const columns = ref([
     { accessorKey: 'expand', header: '', meta: { class: { th: 'all min-width' } }, hidden: false, alwaysVisible: true },
+    {
+        accessorKey: 'select',
+        header: ({ table }) =>
+            h(UCheckbox, {
+                modelValue: table.getIsSomePageRowsSelected()
+                    ? 'indeterminate'
+                    : table.getIsAllPageRowsSelected(),
+                'onUpdate:modelValue': (value) =>
+                    table.toggleAllPageRowsSelected(!!value),
+                ariaLabel: 'Select all'
+            }),
+        cell: ({ row }) =>
+            h(UCheckbox, {
+                modelValue: row.getIsSelected(),
+                'onUpdate:modelValue': (value) => row.toggleSelected(!!value),
+                ariaLabel: 'Select row'
+            })
+    },
     { accessorKey: 'id', header: 'Id', meta: { class: { th: 'all min-width' } }, hidden: false, alwaysVisible: true },
     { accessorKey: 'name', header: 'Name', meta: { class: { th: 'all min-width' } }, hidden: false },
     { accessorKey: 'title', header: 'Title', meta: { class: { th: 'min-width' } }, hidden: false },
     { accessorKey: 'email', header: 'Email', class: '', hidden: false },
     { accessorKey: 'role', header: 'Role', meta: { class: { th: 'min-width' } }, hidden: false },
     { accessorKey: 'englishName', header: 'EnglishName', meta: { class: { th: 'min-width' } }, hidden: false },
-    { accessorKey: 'titleI', header: 'Title 1', meta: { class: { th: 'min-width' } }, hidden: false },
-    { accessorKey: 'emailI', header: 'Email 1', meta: { class: { th: 'min-width' } }, hidden: false },
-    { accessorKey: 'roleI', header: 'Role 1', meta: { class: { th: 'min-width' } }, hidden: false },
+    { accessorKey: 'titleI', header: 'TitleI', meta: { class: { th: 'min-width' } }, hidden: false },
+    { accessorKey: 'emailI', header: 'EmailI', meta: { class: { th: 'min-width' } }, hidden: false },
+    { accessorKey: 'roleI', header: 'RoleI', meta: { class: { th: 'min-width' } }, hidden: false },
     { accessorKey: 'actions', header: 'Actions', meta: { class: { th: 'all min-width' } }, hidden: false, alwaysVisible: true },
 ]);
 
-// Reactive visibleColumns updates based on scroll state
 const visibleColumns = computed(() => {
     return columns.value.filter(e => !e.hidden)
 }
@@ -54,12 +74,10 @@ const data = ref([
 ])
 
 const previousWidth = ref(0)
-const BREAKPOINT_BUFFER = 50 // Buffer to prevent rapid toggling
+const BREAKPOINT_BUFFER = columns.value.length;
 
-// Recursive function for initial setup
-async function recursiveColumnAdjustment(attempt = 0, maxAttempts = 20) {
+async function recursiveColumnAdjustment() {
     const tableElement = refDataTable.value?.$el;
-    if (!tableElement || attempt >= maxAttempts) return;
 
     const scrollWidth = tableElement.scrollWidth;
     const clientWidth = tableElement.clientWidth;
@@ -74,7 +92,7 @@ async function recursiveColumnAdjustment(attempt = 0, maxAttempts = 20) {
             refDataTable.value?.tableApi?.getColumn(lastColumn.accessorKey).toggleVisibility(false);
 
             await nextTick();
-            await recursiveColumnAdjustment(attempt + 1, maxAttempts);
+            await recursiveColumnAdjustment();
         }
     }
 }
@@ -83,6 +101,7 @@ function handleResize() {
     if (typeof window === 'undefined') return;
 
     const tableElement = refDataTable.value?.$el;
+
     if (!tableElement) return;
 
     const currentWidth = window.innerWidth;
@@ -91,10 +110,14 @@ function handleResize() {
     if (Math.abs(widthDifference) > BREAKPOINT_BUFFER) {
         if (widthDifference > 0) {
             tryShowColumn();
-        } else {
-            tryHideColumn();
         }
+
         previousWidth.value = currentWidth;
+
+        clearTimeout(window.handleReCal);
+        window.handleReCal = setTimeout(() => {
+            reCulResponsive();
+        }, 50);
     }
 }
 
@@ -117,38 +140,7 @@ function tryShowColumn() {
             if (newScrollWidth <= newClientWidth && hiddenColumns.length > 1) {
                 tryShowColumn();
             }
-        }, 50);
-    } else {
-        // columnVisibility.value = {}
-        // console.log('---->>', columnVisibility.value)
-    }
-}
-
-function tryHideColumn() {
-    const tableElement = refDataTable.value?.$el;
-    if (!tableElement) return;
-
-    const scrollWidth = tableElement.scrollWidth;
-    const clientWidth = tableElement.clientWidth;
-
-    if (scrollWidth > clientWidth) {
-        const visibleColumns = columns.value
-            .filter(col => !col.hidden && !col.alwaysVisible)
-            .sort((a, b) => columns.value.indexOf(b) - columns.value.indexOf(a));
-
-        if (visibleColumns.length > 0) {
-            const columnToHide = visibleColumns[0];
-            columnToHide.hidden = true;
-            refDataTable.value?.tableApi?.getColumn(columnToHide.accessorKey).toggleVisibility(false);
-
-            setTimeout(() => {
-                const newScrollWidth = tableElement.scrollWidth;
-                const newClientWidth = tableElement.clientWidth;
-                if (newScrollWidth > newClientWidth) {
-                    tryHideColumn();
-                }
-            }, 50);
-        }
+        }, 10);
     }
 }
 
@@ -160,12 +152,18 @@ function debounce(fn, delay = 100) {
     };
 }
 
-onMounted(() => {
+function reCulResponsive() {
     if (typeof window !== 'undefined') {
         previousWidth.value = window.innerWidth;
         nextTick(() => {
             recursiveColumnAdjustment();
         });
+    }
+}
+
+onMounted(() => {
+    if (typeof window !== 'undefined') {
+        reCulResponsive()
 
         const debouncedResize = debounce(handleResize);
         window.addEventListener("resize", debouncedResize);
@@ -191,7 +189,6 @@ watch(columnVisibility, (n) => {
         }
     }
 }, { deep: true })
-
 </script>
 
 <style>
